@@ -29,3 +29,6 @@ MANIFEST
 data/
 ckpt/
 *.sh
+src/examples
+src/output_frame
+src/video_fragment

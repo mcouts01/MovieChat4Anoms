@@ -33,7 +33,6 @@ from moviepy.editor import*
 import random as rnd
 from transformers import StoppingCriteria, StoppingCriteriaList
 from PIL import Image
-import GPUtil
 import gradio as gr
 
 MAX_INT = 8
@@ -370,7 +369,6 @@ if __name__ =='__main__':
         middle_video = False
 
     img_list = []
-    middle_video = True
     msg = chat.upload_video_without_audio(
         video_path=video_path, 
         fragment_video_path=fragment_video_path,

@@ -18,9 +18,6 @@ import queue
 import numpy as np
 from scipy.spatial.distance import cosine
 
-from skimage import transform
-import cv2
-
 from PIL import Image
 
 @registry.register_model("moviechat")
@@ -273,26 +270,37 @@ class MovieChat(Blip2Base):
             for i in self.short_memory_buffer:
                 self.temp_short_memory.append(i)
             
-            #merge short_memory_frames
-            similar_list = []
-            for frame_i in range(len(self.short_memory_buffer) -1):
-                frame_silimar = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
-                similar_list.append(frame_silimar)
-            
+            # Function to compute Euclidean distance
+            def euclidean_distance(a, b):
+                """Compute the Euclidean distance between two tensors."""
+                return torch.norm(a - b)
 
+            # Compute distances for consecutive frames
+            distance_list = []
+            for frame_i in range(len(self.short_memory_buffer) - 1):
+                frame_distance = euclidean_distance(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                distance_list.append(frame_distance.item())
+
+            # Consolidate frames based on greatest distance
             while len(self.short_memory_buffer) > self.short_memory_merge:
-                max_value = max(similar_list)
-                max_index = similar_list.index(max_value)
-                new_frame_feature = (self.short_memory_buffer[max_index].cpu()+self.short_memory_buffer[max_index+1].cpu())/2
+                max_value = max(distance_list)
+                max_index = distance_list.index(max_value)
+                
+                # Average the two most distant frames
+                new_frame_feature = (self.short_memory_buffer[max_index].cpu() + self.short_memory_buffer[max_index+1].cpu()) / 2
+                
+                # Update the short-term memory with the new averaged frame and remove the next frame
                 self.short_memory_buffer[max_index] = new_frame_feature.cuda()
                 del(self.short_memory_buffer[max_index+1])
-                similar_list = []
-                for frame_i in range(len(self.short_memory_buffer)-1):
-                    frame_silimar = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
-                    similar_list.append(frame_silimar)
-
-            for frame in self.short_memory_buffer:
                 
+                # Recompute distances
+                distance_list = []
+                for frame_i in range(len(self.short_memory_buffer) - 1):
+                    frame_distance = euclidean_distance(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                    distance_list.append(frame_distance.item())
+
+            # Transfer consolidated frames to long-term memory
+            for frame in self.short_memory_buffer:
                 self.long_memory_buffer.append(frame)
 
     def encode_long_video(self, cur_image, middle_video:False):
