@@ -278,11 +278,13 @@ class MovieChat(Blip2Base):
             # Compute distances for consecutive frames
             distance_list = []
             for frame_i in range(len(self.short_memory_buffer) - 1):
+                print('Compute distance between consecutive frames.')
                 frame_distance = euclidean_distance(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                 distance_list.append(frame_distance.item())
 
             # Consolidate frames based on greatest distance
             while len(self.short_memory_buffer) > self.short_memory_merge:
+                print('Consolide frames.')
                 max_value = max(distance_list)
                 max_index = distance_list.index(max_value)
                 
@@ -301,6 +303,7 @@ class MovieChat(Blip2Base):
 
             # Transfer consolidated frames to long-term memory
             for frame in self.short_memory_buffer:
+                print('Consolidated frame added to long-term memory.')
                 self.long_memory_buffer.append(frame)
 
     def encode_long_video(self, cur_image, middle_video:False):
