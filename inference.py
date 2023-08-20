@@ -297,9 +297,12 @@ class Chat:
 
             cap.set(cv2.CAP_PROP_POS_FRAMES, cur_fps)
             ret, frame = cap.read()
-            temp_frame_path = 'src/output_frame/snapshot.jpg'
+            # Determine a unique filename for the frame
+            frame_number = cap.get(cv2.CAP_PROP_POS_FRAMES)  # Get current frame number
+            temp_frame_path = f'src/output_frame2/snapshot_video{video_id}_frame{int(frame_number)}.jpg'
 
-            cv2.imwrite(temp_frame_path, frame) 
+            # Save the frame with the unique filename
+            cv2.imwrite(temp_frame_path, frame)
             raw_image = Image.open(temp_frame_path).convert('RGB') 
             image = self.image_vis_processor(raw_image).unsqueeze(0).unsqueeze(2).to(self.device) # [1,3,1,224,224]
             cur_image = self.model.encode_image(image)
