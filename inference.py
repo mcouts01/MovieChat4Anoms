@@ -356,7 +356,6 @@ if __name__ =='__main__':
     fps_video = cap.get(cv2.CAP_PROP_FPS)
     cur_fps = fps_video * (60*cur_min + cur_sec)
 
-    cap = cv2.VideoCapture(video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, cur_fps)
     ret, frame = cap.read()
     temp_frame_path = 'src/output_frame/snapshot.jpg'
@@ -373,12 +372,12 @@ if __name__ =='__main__':
 
     img_list = []
     msg = chat.upload_video_without_audio(
-        video_path=video_path, 
-        fragment_video_path=fragment_video_path,
-        cur_min=cur_min, 
-        cur_sec=cur_sec, 
+        video_path = video_path, 
+        fragment_video_path = fragment_video_path,
+        cur_min = cur_min, 
+        cur_sec = cur_sec, 
         cur_image = cur_image, 
-        img_list=img_list, 
+        img_list = img_list, 
         middle_video = middle_video,
         )
     

@@ -269,19 +269,13 @@ class MovieChat(Blip2Base):
             self.temp_short_memory = []
             for i in self.short_memory_buffer:
                 self.temp_short_memory.append(i)
-            
-            # Function to compute Euclidean distance
-            def euclidean_distance(a, b):
-                """Compute the Euclidean distance between two tensors."""
-                return torch.norm(a - b)
 
             # Compute distances for consecutive frames
             distance_list = []
             for frame_i in range(len(self.short_memory_buffer) - 1):
                 print('Compute distance between consecutive frames.')
-                frame_distance = euclidean_distance(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                 distance_list.append(frame_distance.item())
-
             # Consolidate frames based on greatest distance
             while len(self.short_memory_buffer) > self.short_memory_merge:
                 print('Consolide frames.')
@@ -298,7 +292,7 @@ class MovieChat(Blip2Base):
                 # Recompute distances
                 distance_list = []
                 for frame_i in range(len(self.short_memory_buffer) - 1):
-                    frame_distance = euclidean_distance(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                    frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                     distance_list.append(frame_distance.item())
 
             # Transfer consolidated frames to long-term memory
@@ -337,6 +331,7 @@ class MovieChat(Blip2Base):
         frame_position_embeddings = torch.cat(frame_position_embeddings, dim = 0)
         
         if middle_video:
+            print('middle_video is True')
             cur_long_length = len(self.long_memory_buffer)
             cur_short_length = len(self.temp_short_memory)
 
@@ -384,12 +379,13 @@ class MovieChat(Blip2Base):
             )
             video_hiddens=video_query_output.last_hidden_state 
 
-        # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
+            # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
             inputs_llama = self.llama_proj(video_hiddens)
             atts_llama = torch.ones(inputs_llama.size()[:-1], dtype=torch.long).to(device)
             return inputs_llama, atts_llama
 
         else:           
+            print('middle_video is False')
             cur_video = []
             cur_pos = []
             for i in range(len(self.long_memory_buffer)):
@@ -417,10 +413,8 @@ class MovieChat(Blip2Base):
                 return_dict=True,
             )
             video_hiddens=video_query_output.last_hidden_state 
-
-
-
-        # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
+            
+            # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
             inputs_llama = self.llama_proj(video_hiddens)
             atts_llama = torch.ones(inputs_llama.size()[:-1], dtype=torch.long).to(device) 
             return inputs_llama, atts_llama
