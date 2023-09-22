@@ -97,11 +97,11 @@ def video_duration(filename):
 def capture_video(video_path, fragment_video_path, per_video_length, n_stage):
     start_time = n_stage * per_video_length
     end_time = (n_stage+1) * per_video_length
-    video =CompositeVideoClip([VideoFileClip(video_path).subclip(start_time,end_time)])
+    video = CompositeVideoClip([VideoFileClip(video_path).subclip(start_time,end_time)])
     video.write_videofile(fragment_video_path)
 
     
-def load_video(video_path, n_frms=MAX_INT, height=-1, width=-1, sampling="uniform", return_msg = False):
+def load_video(video_path, n_frms=MAX_INT, height=-1, width=-1, return_msg = False):
     decord.bridge.set_bridge("torch")
     vr = VideoReader(uri=video_path, height=height, width=width)
 
@@ -110,14 +110,7 @@ def load_video(video_path, n_frms=MAX_INT, height=-1, width=-1, sampling="unifor
 
     n_frms = min(n_frms, vlen)
 
-    if sampling == "uniform":
-        indices = np.arange(start, end, vlen / n_frms).astype(int).tolist()
-    elif sampling == "headtail":
-        indices_h = sorted(rnd.sample(range(vlen // 2), n_frms // 2))
-        indices_t = sorted(rnd.sample(range(vlen // 2, vlen), n_frms // 2))
-        indices = indices_h + indices_t
-    else:
-        raise NotImplementedError
+    indices = np.arange(start, end, vlen / n_frms).astype(int).tolist()
 
     # get_batch -> T, H, W, C
     temp_frms = vr.get_batch(indices)
@@ -217,65 +210,66 @@ class Chat:
         output_text = output_text.split('###')[0]  # remove the stop sign '###'
         output_text = output_text.split('Assistant:')[-1].strip()
         return output_text, output_token.cpu().numpy()
-    
-    def cal_frame(self, video_length, cur_min, cur_sec, middle_video):
+
+    def cal_cur_frame(self, video_length, cur_min, cur_sec):
         per_frag_second = video_length / N_SAMPLES
-        if middle_video:
-            cur_seconds = cur_min * 60 + cur_sec
-            num_frames = int(cur_seconds / per_frag_second)
-            per_frame_second = per_frag_second/SHORT_MEMORY_Length
-            cur_frame = int((cur_seconds-per_frag_second*num_frames)/per_frame_second)
-            return num_frames, cur_frame
-        else:
-            cur_frame = 0
-            num_frames = int(video_length / per_frag_second)
-            return num_frames, cur_frame
-
-    def upload_video_without_audio(self, video_path, fragment_video_path, cur_min, cur_sec, cur_image, img_list, middle_video):
+        cur_seconds = cur_min * 60 + cur_sec
+        num_frames = int(cur_seconds / per_frag_second)
+        per_frame_second = per_frag_second/SHORT_MEMORY_Length
+        cur_frame = int((cur_seconds-per_frag_second*num_frames)/per_frame_second)
+        return num_frames, cur_frame
+        
+    def upload_video_breakpoint(self, video_path, fragement_video_path, cur_min, cur_sec, cur_image, img_list):
         msg = ""
-        if isinstance(video_path, str):  # is a video path
-            ext = os.path.splitext(video_path)[-1].lower()
-            print(video_path)
-            video_length = video_duration(video_path) 
-            num_frames, cur_frame = self.cal_frame(video_length, cur_min, cur_sec, middle_video)
-            if num_frames == 0:
-                video_fragment = parse_video_fragment(video_path=video_path, video_length=video_length, n_stage=0, n_samples= N_SAMPLES)
-                video_fragment, msg = load_video(
-                    video_path=fragment_video_path,
-                    n_frms=MAX_INT, 
-                    height=224,
-                    width=224,
-                    sampling ="uniform", return_msg = True
-                ) 
-                video_fragment = self.vis_processor.transform(video_fragment)
-                video_fragment = video_fragment.unsqueeze(0).to(self.device)
-
-
-                self.model.encode_short_memory_frame(video_fragment, cur_frame)
-            else:
-                for i in range(num_frames):
-                    print(i)
-                    video_fragment = parse_video_fragment(video_path=video_path, video_length=video_length, n_stage=i, n_samples= N_SAMPLES)
-                    video_fragment, msg = load_video(
-                        video_path=fragment_video_path,
-                        n_frms=MAX_INT, 
-                        height=224,
-                        width=224,
-                        sampling ="uniform", return_msg = True
-                    )
-                    video_fragment = self.vis_processor.transform(video_fragment) 
-                    video_fragment = video_fragment.unsqueeze(0).to(self.device)
-
-                    if middle_video:
-                        self.model.encode_short_memory_frame(video_fragment, cur_frame)
-                    else:
-                        self.model.encode_short_memory_frame(video_fragment)
-                
-        else:
+        if not isinstance(video_path, str):  # is a video path
             raise NotImplementedError
+        
+        video_length = video_duration(video_path)
+        num_frames, cur_frame = self.cal_cur_frame(video_length, cur_min, cur_sec, middle_video)
+
+        for i in range(num_frames):
+            video_fragment = parse_video_fragment(video_path=video_path, video_length=video_length, n_stage=i, n_samples= N_SAMPLES)
+            video_fragment, msg = load_video(
+                video_path=fragment_video_path,
+                n_frms=MAX_INT, 
+                height=224,
+                width=224,
+                return_msg = True
+            )
+            video_fragment = self.vis_processor.transform(video_fragment) 
+            video_fragment = video_fragment.unsqueeze(0).to(self.device)
+
+            self.model.encode_short_memory_frame(video_fragment, cur_frame)
+
         video_emb, _ = self.model.encode_long_video(cur_image, middle_video)
         img_list.append(video_emb) 
-        return msg  
+        return msg
+
+    def upload_video_global(self, video_path, fragment_video_path, img_list):
+        msg = ""
+        if not isinstance(video_path, str):  # is a video path
+            raise NotImplementedError
+        
+        video_length = video_duration(video_path)
+
+        for i in range(N_SAMPLES):
+            video_fragment = parse_video_fragment(video_path=video_path, video_length=video_length, n_stage=i, n_samples= N_SAMPLES)
+            video_fragment, msg = load_video(
+                video_path=fragment_video_path,
+                n_frms=MAX_INT, 
+                height=224,
+                width=224,
+                return_msg = True
+            )
+            video_fragment = self.vis_processor.transform(video_fragment) 
+            video_fragment = video_fragment.unsqueeze(0).to(self.device)
+
+            self.model.encode_short_memory_frame(video_fragment)
+
+        video_emb = self.model.encode_long_global_video()
+        img_list.append(video_emb) 
+        return msg
+
     def gener_infer(self, video_path, text_input, num_beams, temperature, libraries, minute, second):
         print("here")
         fragment_video_path = "src/video_fragment/output.mp4"
@@ -343,40 +337,44 @@ if __name__ =='__main__':
     chat = Chat(model, vis_processor, device='cuda:{}'.format(args.gpu_id))
     print('Initialization Finished')
 
+    middle_video = args.middle_video
     video_path = args.video_path
     fragment_video_path = args.fragment_video_path
-    cur_min = args.cur_min
-    cur_sec = args.cur_sec
-    middle_video = args.middle_video
-
-    cap = cv2.VideoCapture(video_path)
-    fps_video = cap.get(cv2.CAP_PROP_FPS)
-    cur_fps = fps_video * (60*cur_min + cur_sec)
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, cur_fps)
-    ret, frame = cap.read()
-    temp_frame_path = 'src/output_frame/snapshot.jpg'
-
-    cv2.imwrite(temp_frame_path, frame) 
-    raw_image = Image.open(temp_frame_path).convert('RGB') 
-    image = chat.image_vis_processor(raw_image).unsqueeze(0).unsqueeze(2).to(chat.device) # [1,3,1,224,224]
-    cur_image = chat.model.encode_image(image)
+    img_list = []
 
     if middle_video == 1:
         middle_video = True
+        # Grabs the current frame for breakpoint mode
+        cur_min = args.cur_min
+        cur_sec = args.cur_sec
+
+        cap = cv2.VideoCapture(video_path)
+        fps_video = cap.get(cv2.CAP_PROP_FPS)
+        cur_fps = fps_video * (60*cur_min + cur_sec)
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, cur_fps)
+        ret, frame = cap.read()
+        temp_frame_path = 'src/output_frame/snapshot.jpg'
+
+        cv2.imwrite(temp_frame_path, frame) 
+        raw_image = Image.open(temp_frame_path).convert('RGB') 
+        image = chat.image_vis_processor(raw_image).unsqueeze(0).unsqueeze(2).to(chat.device) # [1,3,1,224,224]
+        cur_image = chat.model.encode_image(image)
+        msg = chat.upload_video_breakpoint(
+            video_path = video_path, 
+            fragment_video_path = fragment_video_path,
+            cur_min = cur_min, 
+            cur_sec = cur_sec, 
+            cur_image = cur_image, 
+            img_list = img_list, 
+            )
     else:
         middle_video = False
-
-    img_list = []
-    msg = chat.upload_video_without_audio(
-        video_path = video_path, 
-        fragment_video_path = fragment_video_path,
-        cur_min = cur_min, 
-        cur_sec = cur_sec, 
-        cur_image = cur_image, 
-        img_list = img_list, 
-        middle_video = middle_video,
-        )
+        msg = chat.upload_video_global(
+            video_path = video_path, 
+            fragment_video_path = fragment_video_path,
+            img_list = img_list, 
+            )
     
     text_input = args.text_query
 

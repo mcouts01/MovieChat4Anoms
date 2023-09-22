@@ -240,11 +240,9 @@ class MovieChat(Blip2Base):
 
     def encode_short_memory_frame(self, videofragment, n_frame:int = 16):
         device = videofragment.device
-        # input shape b,c,t,h,w
-        batch_size,_,time_length,_,_ = videofragment.size() # batch_size:1 time_length:8
         videofragment = einops.rearrange(videofragment, 'b c t h w -> (b t) c h w') 
         with self.maybe_autocast():
-            # embed image features with blip2, out: (b t) q h
+            # embed image features with blip2, out: C N D <- Paper notation
             image_embeds = self.ln_vision(self.visual_encoder(videofragment)).to(device) 
             image_atts = torch.ones(image_embeds.size()[:-1], dtype=torch.long).to(device)
 
@@ -273,12 +271,11 @@ class MovieChat(Blip2Base):
             # Compute distances for consecutive frames
             distance_list = []
             for frame_i in range(len(self.short_memory_buffer) - 1):
-                print('Compute distance between consecutive frames.')
-                frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                frame_distance = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                 distance_list.append(frame_distance.item())
-            # Consolidate frames based on greatest distance
+
+            # Consolidate frames based on greatest similarity
             while len(self.short_memory_buffer) > self.short_memory_merge:
-                print('Consolide frames.')
                 max_value = max(distance_list)
                 max_index = distance_list.index(max_value)
                 
@@ -292,16 +289,16 @@ class MovieChat(Blip2Base):
                 # Recompute distances
                 distance_list = []
                 for frame_i in range(len(self.short_memory_buffer) - 1):
-                    frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                    frame_distance = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                     distance_list.append(frame_distance.item())
+
+
 
             # Transfer consolidated frames to long-term memory
             for frame in self.short_memory_buffer:
-                print('Consolidated frame added to long-term memory.')
                 self.long_memory_buffer.append(frame)
 
-    def encode_long_video(self, cur_image, middle_video:False):
-        
+    def encode_long_global_video(self):
         device = 'cuda:0'
         # input shape b,c,t,h,w
         batch_size = 1 # batch_size:1 
@@ -313,7 +310,7 @@ class MovieChat(Blip2Base):
         position_ids = position_ids.unsqueeze(0).expand(batch_size, -1) 
         p = self.video_frame_position_embedding(position_ids).squeeze(0)
         frame_position_embeddings = p.unsqueeze(-2)
-         
+
         u = []
         alpha = 0.01 
 
@@ -330,94 +327,120 @@ class MovieChat(Blip2Base):
                 frame_position_embeddings.append(q_i)
         frame_position_embeddings = torch.cat(frame_position_embeddings, dim = 0)
         
-        if middle_video:
-            print('middle_video is True')
-            cur_long_length = len(self.long_memory_buffer)
-            cur_short_length = len(self.temp_short_memory)
+        cur_video = []
+        cur_pos = []
+        for i in range(len(self.long_memory_buffer)):
+                cur_pos.append(frame_position_embeddings[i])
+                cur_video.append(self.long_memory_buffer[i])
+        
+        cur_pos = [j.unsqueeze(0) for j in cur_pos]
+        cur_position_embeddings = torch.cat(cur_pos, dim=0)
+        cur_position_embeddings = cur_position_embeddings.unsqueeze(-2) 
+        cur_position_embeddings = cur_position_embeddings.unsqueeze(0)
+        frame_hidden_state = torch.cat(cur_video, dim=0) #[1,32,768]
+        frame_hidden_state = einops.rearrange(frame_hidden_state, '(b t) q h -> b t q h', b=batch_size, t=len(self.long_memory_buffer)) #[64,32,768]
+            
+        frame_hidden_state = cur_position_embeddings + frame_hidden_state
+            
+        # frame attention
+        frame_hidden_state =  einops.rearrange(frame_hidden_state, 'b t q h -> b (t q) h',b=batch_size,t=len(self.long_memory_buffer)) 
+        frame_atts = torch.ones(frame_hidden_state.size()[:-1], dtype=torch.long).to(device) 
+        video_query_tokens = self.video_query_tokens.expand(frame_hidden_state.shape[0], -1, -1) 
+        # a video Q-former to aggregate frame-level representations 
+        video_query_output = self.video_Qformer.bert(
+            query_embeds=video_query_tokens,
+            encoder_hidden_states=frame_hidden_state,
+            encoder_attention_mask=frame_atts,
+            return_dict=True,
+        )
+        video_hiddens=video_query_output.last_hidden_state 
+        
+        # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
+        inputs_llama = self.llama_proj(video_hiddens)
+        atts_llama = torch.ones(inputs_llama.size()[:-1], dtype=torch.long).to(device) 
+        return inputs_llama
 
-            while (cur_long_length+cur_short_length+1) > self.max_frame_pos:
-                self.temp_short_memory.pop(0)
-            
-            if len(self.long_memory_buffer) == 0:
-                self.temp_short_memory = [i.unsqueeze(0) for i in self.temp_short_memory]
-                cur_short = torch.cat(self.temp_short_memory, dim = 0)
-                video_features = torch.cat([video_features, cur_image], dim = 0)
-            else:
-                cur_video = torch.cat(self.long_memory_buffer,dim = 0)
-                self.temp_short_memory = [i.unsqueeze(0) for i in self.temp_short_memory]
-                cur_short = torch.cat(self.temp_short_memory, dim = 0)
-                
-                video_features = torch.cat([cur_video,cur_short], dim = 0)
-                video_features = torch.cat([video_features, cur_image], dim = 0)
-            
-            cur_video = []
-            cur_pos = []
-            for i in range(len(video_features)):
-                    cur_pos.append(frame_position_embeddings[i])
-                    cur_video.append(video_features[i])
-            
-            cur_pos = [j.unsqueeze(0) for j in cur_pos]
-            cur_video = [j.unsqueeze(0) for j in cur_video]
-            cur_position_embeddings = torch.cat(cur_pos, dim=0)
-            cur_position_embeddings = cur_position_embeddings.unsqueeze(-2) 
-            cur_position_embeddings = cur_position_embeddings.unsqueeze(0)
-            frame_hidden_state = torch.cat(cur_video, dim=0)
-            frame_hidden_state = einops.rearrange(frame_hidden_state, '(b t) q h -> b t q h', b=batch_size, t=len(video_features))
-                
-            frame_hidden_state = cur_position_embeddings + frame_hidden_state 
-                
-            # frame attention
-            frame_hidden_state =  einops.rearrange(frame_hidden_state, 'b t q h -> b (t q) h',b=batch_size,t=len(video_features)) 
-            frame_atts = torch.ones(frame_hidden_state.size()[:-1], dtype=torch.long).to(device)
-            video_query_tokens = self.video_query_tokens.expand(frame_hidden_state.shape[0], -1, -1) 
-            # a video Q-former to aggregate frame-level representations 
-            video_query_output = self.video_Qformer.bert(
-                query_embeds=video_query_tokens, 
-                encoder_hidden_states=frame_hidden_state, 
-                encoder_attention_mask=frame_atts, 
-                return_dict=True,
-            )
-            video_hiddens=video_query_output.last_hidden_state 
+    def encode_long_video(self, cur_image):
+        
+        device = 'cuda:0'
+        # input shape b,c,t,h,w
+        batch_size = 1 # batch_size:1 
+        self.long_memory_buffer = [i.unsqueeze(0) for i in self.long_memory_buffer]
 
-            # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
-            inputs_llama = self.llama_proj(video_hiddens)
-            atts_llama = torch.ones(inputs_llama.size()[:-1], dtype=torch.long).to(device)
-            return inputs_llama, atts_llama
+        # expand position embedding
+        n_position = 8
+        position_ids = torch.arange(n_position).long().to(self.query_tokens.device)
+        position_ids = position_ids.unsqueeze(0).expand(batch_size, -1) 
+        p = self.video_frame_position_embedding(position_ids).squeeze(0)
+        frame_position_embeddings = p.unsqueeze(-2)
 
-        else:           
-            print('middle_video is False')
-            cur_video = []
-            cur_pos = []
-            for i in range(len(self.long_memory_buffer)):
-                    cur_pos.append(frame_position_embeddings[i])
-                    cur_video.append(self.long_memory_buffer[i])
+        u = []
+        alpha = 0.01 
+
+        for p_i in p:
+            u_i = (p_i-alpha * p[0])/(1-alpha)
+            u.append(u_i)
+
+        # calculate the position_embedding
+        frame_position_embeddings = []
+        for i in range(n_position):
+            for j in range(n_position):
+                q_i = alpha * u[i] + (1-alpha) * u[j] 
+                q_i = q_i.unsqueeze(0)
+                frame_position_embeddings.append(q_i)
+        frame_position_embeddings = torch.cat(frame_position_embeddings, dim = 0)
+        
+        cur_long_length = len(self.long_memory_buffer)
+        cur_short_length = len(self.temp_short_memory)
+
+        while (cur_long_length+cur_short_length+1) > self.max_frame_pos:
+            self.temp_short_memory.pop(0)
+        
+        if len(self.long_memory_buffer) == 0:
+            self.temp_short_memory = [i.unsqueeze(0) for i in self.temp_short_memory]
+            cur_short = torch.cat(self.temp_short_memory, dim = 0)
+            video_features = torch.cat([video_features, cur_image], dim = 0)
+        else:
+            cur_video = torch.cat(self.long_memory_buffer,dim = 0)
+            self.temp_short_memory = [i.unsqueeze(0) for i in self.temp_short_memory]
+            cur_short = torch.cat(self.temp_short_memory, dim = 0)
             
-            cur_pos = [j.unsqueeze(0) for j in cur_pos]
-            cur_position_embeddings = torch.cat(cur_pos, dim=0)
-            cur_position_embeddings = cur_position_embeddings.unsqueeze(-2) 
-            cur_position_embeddings = cur_position_embeddings.unsqueeze(0)
-            frame_hidden_state = torch.cat(cur_video, dim=0) #[1,32,768]
-            frame_hidden_state = einops.rearrange(frame_hidden_state, '(b t) q h -> b t q h', b=batch_size, t=len(self.long_memory_buffer)) #[64,32,768]
-                
-            frame_hidden_state = cur_position_embeddings + frame_hidden_state
-                
-            # frame attention
-            frame_hidden_state =  einops.rearrange(frame_hidden_state, 'b t q h -> b (t q) h',b=batch_size,t=len(self.long_memory_buffer)) 
-            frame_atts = torch.ones(frame_hidden_state.size()[:-1], dtype=torch.long).to(device) 
-            video_query_tokens = self.video_query_tokens.expand(frame_hidden_state.shape[0], -1, -1) 
-            # a video Q-former to aggregate frame-level representations 
-            video_query_output = self.video_Qformer.bert(
-                query_embeds=video_query_tokens,
-                encoder_hidden_states=frame_hidden_state,
-                encoder_attention_mask=frame_atts,
-                return_dict=True,
-            )
-            video_hiddens=video_query_output.last_hidden_state 
+            video_features = torch.cat([cur_video,cur_short], dim = 0)
+            video_features = torch.cat([video_features, cur_image], dim = 0)
+        
+        cur_video = []
+        cur_pos = []
+        for i in range(len(video_features)):
+                cur_pos.append(frame_position_embeddings[i])
+                cur_video.append(video_features[i])
+        
+        cur_pos = [j.unsqueeze(0) for j in cur_pos]
+        cur_video = [j.unsqueeze(0) for j in cur_video]
+        cur_position_embeddings = torch.cat(cur_pos, dim=0)
+        cur_position_embeddings = cur_position_embeddings.unsqueeze(-2) 
+        cur_position_embeddings = cur_position_embeddings.unsqueeze(0)
+        frame_hidden_state = torch.cat(cur_video, dim=0)
+        frame_hidden_state = einops.rearrange(frame_hidden_state, '(b t) q h -> b t q h', b=batch_size, t=len(video_features))
             
-            # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
-            inputs_llama = self.llama_proj(video_hiddens)
-            atts_llama = torch.ones(inputs_llama.size()[:-1], dtype=torch.long).to(device) 
-            return inputs_llama, atts_llama
+        frame_hidden_state = cur_position_embeddings + frame_hidden_state 
+            
+        # frame attention
+        frame_hidden_state =  einops.rearrange(frame_hidden_state, 'b t q h -> b (t q) h',b=batch_size,t=len(video_features)) 
+        frame_atts = torch.ones(frame_hidden_state.size()[:-1], dtype=torch.long).to(device)
+        video_query_tokens = self.video_query_tokens.expand(frame_hidden_state.shape[0], -1, -1) 
+        # a video Q-former to aggregate frame-level representations 
+        video_query_output = self.video_Qformer.bert(
+            query_embeds=video_query_tokens, 
+            encoder_hidden_states=frame_hidden_state, 
+            encoder_attention_mask=frame_atts, 
+            return_dict=True,
+        )
+        video_hiddens=video_query_output.last_hidden_state 
+
+        # a linear layer to project the output video representations into the same dimension as the text embeddings of LLMs
+        inputs_llama = self.llama_proj(video_hiddens)
+        atts_llama = torch.ones(inputs_llama.size()[:-1], dtype=torch.long).to(device)
+        return inputs_llama, atts_llama
 
     def encode_image(self, image):
         device = 'cuda:0'
