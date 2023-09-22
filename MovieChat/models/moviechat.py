@@ -271,10 +271,10 @@ class MovieChat(Blip2Base):
             # Compute distances for consecutive frames
             distance_list = []
             for frame_i in range(len(self.short_memory_buffer) - 1):
-                frame_distance = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                 distance_list.append(frame_distance.item())
 
-            # Consolidate frames based on greatest similarity
+            # Consolidate frames based on greatest distance
             while len(self.short_memory_buffer) > self.short_memory_merge:
                 max_value = max(distance_list)
                 max_index = distance_list.index(max_value)
@@ -289,7 +289,7 @@ class MovieChat(Blip2Base):
                 # Recompute distances
                 distance_list = []
                 for frame_i in range(len(self.short_memory_buffer) - 1):
-                    frame_distance = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                    frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
                     distance_list.append(frame_distance.item())
 
 
