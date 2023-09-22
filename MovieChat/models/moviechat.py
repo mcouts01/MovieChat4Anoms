@@ -275,28 +275,33 @@ class MovieChat(Blip2Base):
                 distance_list.append(frame_distance.item())
 
             # Consolidate frames based on greatest distance
-            while len(self.short_memory_buffer) > self.short_memory_merge:
-                max_value = max(distance_list)
-                max_index = distance_list.index(max_value)
+            # while len(self.short_memory_buffer) > self.short_memory_merge:
+            #     max_value = max(distance_list)
+            #     max_index = distance_list.index(max_value)
                 
-                # Average the two most distant frames
-                new_frame_feature = (self.short_memory_buffer[max_index].cpu() + self.short_memory_buffer[max_index+1].cpu()) / 2
+            #     # Average the two most distant frames
+            #     new_frame_feature = (self.short_memory_buffer[max_index].cpu() + self.short_memory_buffer[max_index+1].cpu()) / 2
                 
-                # Update the short-term memory with the new averaged frame and remove the next frame
-                self.short_memory_buffer[max_index] = new_frame_feature.cuda()
-                del(self.short_memory_buffer[max_index+1])
+            #     # Update the short-term memory with the new averaged frame and remove the next frame
+            #     self.short_memory_buffer[max_index] = new_frame_feature.cuda()
+            #     del(self.short_memory_buffer[max_index+1])
                 
-                # Recompute distances
-                distance_list = []
-                for frame_i in range(len(self.short_memory_buffer) - 1):
-                    frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
-                    distance_list.append(frame_distance.item())
+            #     # Recompute distances
+            #     distance_list = []
+            #     for frame_i in range(len(self.short_memory_buffer) - 1):
+            #         frame_distance = 1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+            #         distance_list.append(frame_distance.item())
 
-
+            distance_list_tensor = torch.tensor(distance_list)
+            softmax_result = distance_list_tensor.softmax(dim=0)
+            softmax_result = softmax_result.tolist()
+            new_frame_feature = sum([self.short_memory_buffer[i+1].cpu() * softmax_result[i] for i in range(len(softmax_result))])
+            self.long_memory_buffer.append(new_frame_feature.cuda())
+            self.short_memory_buffer = []
 
             # Transfer consolidated frames to long-term memory
-            for frame in self.short_memory_buffer:
-                self.long_memory_buffer.append(frame)
+            # for frame in self.short_memory_buffer:
+            #     self.long_memory_buffer.append(frame)
 
     def encode_long_global_video(self):
         device = 'cuda:0'
