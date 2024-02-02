@@ -32,7 +32,7 @@ def annotate(prediction_set, caption_files, output_dir):
         try:
             # Compute the correctness score
             completion = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
+                model="claude-instant-1",
                 messages=[
                     {
                         "role": "system",
@@ -202,4 +202,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
