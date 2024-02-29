@@ -18,7 +18,7 @@ model:
   fusion_header_type: "seqTransf"
 
   # ckpt: "ckpt/VL_LLaMA_2_7B_Finetuned.pth" 
-  ckpt: "ckpt/finetune-vicuna7b-v2.pth"
+  ckpt: "ckpt/pretrained_ckpt/finetune-vicuna7b-v2.pth"
 
 datasets:
   webvid:
