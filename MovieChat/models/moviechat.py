@@ -2,6 +2,7 @@ import logging
 import random
 
 import torch
+import math
 from torch.cuda.amp import autocast as autocast
 import torch.nn as nn
 
@@ -75,7 +76,7 @@ class MovieChat(Blip2Base):
         long_memory_length = 256,
         short_memory_merge = 2,
         Qformer_input = 8,
-        n_position = 16,
+        n_position = 32,
     ):
         super().__init__()
 
@@ -231,29 +232,6 @@ class MovieChat(Blip2Base):
         self.question_minute = None
         self.question_second = None
 
-        # expand position embedding
-        self.n_position = n_position
-        batch_size = 1
-        position_ids = torch.arange(self.n_position).long().to(self.query_tokens.device)
-        position_ids = position_ids.unsqueeze(0).expand(batch_size, -1) 
-        p = self.video_frame_position_embedding(position_ids).squeeze(0)
-         
-        u = []
-        alpha = 0.01 
-
-        for p_i in p:
-            u_i = (p_i-alpha * p[0])/(1-alpha)
-            u.append(u_i)
-
-        # calculate the position_embedding
-        self.frame_position_embeddings = []
-        for i in range(self.n_position):
-            for j in range(self.n_position):
-                q_i = alpha * u[i] + (1-alpha) * u[j] 
-                q_i = q_i.unsqueeze(0)
-                self.frame_position_embeddings.append(q_i)
-        self.frame_position_embeddings = torch.cat(self.frame_position_embeddings, dim = 0)
-
     def vit_to_cpu(self):
         self.ln_vision.to("cpu")
         self.ln_vision.float()
@@ -282,10 +260,7 @@ class MovieChat(Blip2Base):
             cur_frame = 0
             q_hidden_state = query_output.last_hidden_state 
             for frame in q_hidden_state:
-                if cur_frame < n_frame:
-                    if len(self.short_memory_buffer) == self.short_memory_length:
-                        self.short_memory_buffer.pop(0)
-                    self.short_memory_buffer.append(frame)
+                self.short_memory_buffer.append(frame)
                 cur_frame += 1
                 
             self.memory_consolidation()
@@ -325,6 +300,30 @@ class MovieChat(Blip2Base):
         # input shape b,c,t,h,w
         batch_size = 1 # batch_size:1 
         self.long_memory_buffer = [i.unsqueeze(0) for i in self.long_memory_buffer]
+        
+        # expand position embedding
+        # self.n_position = math.isqrt(len(self.long_memory_buffer))
+        self.n_position = math.ceil(math.sqrt(len(self.long_memory_buffer)))
+        batch_size = 1
+        position_ids = torch.arange(self.n_position).long().to(self.query_tokens.device)
+        position_ids = position_ids.unsqueeze(0).expand(batch_size, -1) 
+        p = self.video_frame_position_embedding(position_ids).squeeze(0)
+         
+        u = []
+        alpha = 0.01 
+
+        for p_i in p:
+            u_i = (p_i-alpha * p[0])/(1-alpha)
+            u.append(u_i)
+
+        # calculate the position_embedding
+        self.frame_position_embeddings = []
+        for i in range(self.n_position):
+            for j in range(self.n_position):
+                q_i = alpha * u[i] + (1-alpha) * u[j] 
+                q_i = q_i.unsqueeze(0)
+                self.frame_position_embeddings.append(q_i)
+        self.frame_position_embeddings = torch.cat(self.frame_position_embeddings, dim = 0)
 
         
         if middle_video:
