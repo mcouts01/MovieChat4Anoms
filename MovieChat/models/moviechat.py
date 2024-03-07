@@ -267,27 +267,27 @@ class MovieChat(Blip2Base):
             
 
     def memory_consolidation(self):
-        # self.temp_short_memory = []
-        # for i in self.short_memory_buffer:
-        #     self.temp_short_memory.append(i)
+        self.temp_short_memory = []
+        for i in self.short_memory_buffer:
+            self.temp_short_memory.append(i)
             
-        # distance_list = []
-        # # Consolidate frames based on greatest distance
-        # while len(self.short_memory_buffer) > self.short_memory_merge:
-        #     for frame_i in range(len(self.short_memory_buffer)-1):
-        #         score = cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
-        #         distance_list.append(score)
+        # Consolidate frames based on greatest distance
+        while len(self.short_memory_buffer) > 2:
+            scores = []
+            for frame_i in range(len(self.short_memory_buffer)-1, 2):
+                score =  1 - cosine(self.short_memory_buffer[frame_i].flatten().cpu(), self.short_memory_buffer[frame_i+1].flatten().cpu())
+                scores[i] = score
             
-        #     max_value = max(distance_list)
-        #     max_index = distance_list.index(max_value)
+            if all(score < 0.8 for score in scores): break
+            to_del = []
+            for i in range(len(scores)):
+                if scores[i] > 0.8:
+                    new_frame_feature = (self.short_memory_buffer[i] + self.short_memory_buffer[i+1]) / 2
+                    self.short_memory_buffer[i] = new_frame_feature.cuda()
+                    to_del.append(i+1)
             
-        #     # Average the two most distant frames
-        #     new_frame_feature = (self.short_memory_buffer[max_index].cpu() + self.short_memory_buffer[max_index+1].cpu()) / 2
-            
-        #     # Update the short-term memory with the new averaged frame and remove the next frame
-        #     self.short_memory_buffer[max_index] = new_frame_feature.cuda()
-        #     del(self.short_memory_buffer[max_index+1])
-        #     distance_list = []
+            for i in to_del:
+                del(self.short_memory_buffer[i])
 
         for frame in self.short_memory_buffer:
             self.long_memory_buffer.append(frame)
